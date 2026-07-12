@@ -1,0 +1,578 @@
+
+#################installing packages and library loading###########################
+  install.packages("ggplot2")
+  install.packages("ggrepel")
+  install.packages("reshape2") 
+  install.packages("amap")
+  install.packages("BiocManager")
+  BiocManager::install("clusterProfiler")  
+  BiocManager::install("org.Hs.eg.db")
+  BiocManager::install("STRINGdb")
+  install.packages("devEMF")
+  install.packages("svglite") 
+  install.packages("ggthemes")
+
+
+  library(ggplot2)
+  library(ggrepel)
+  library(reshape2)
+  library(amap) 
+  library(clusterProfiler)
+  library(org.Hs.eg.db)
+  library(STRINGdb)
+  library(devEMF)
+  library(svglite)
+  library(ggthemes)
+
+#########################importing tables, merging, sorting, saving and exporting##########################
+  
+  em = read.table("/Users/annociatachisale/Documents/em.csv", header=TRUE,row.names=1, sep= "\t")
+  de = read.table("/Users/annociatachisale/Documents/DE_control_vs_combo.csv", header=TRUE,row.names=1, sep= "\t")
+  annotations = read.table("/Users/annociatachisale/Documents/annotations.csv", header=TRUE,row.names=1, sep= "\t")
+  ss= read.table("/Users/annociatachisale/Documents/sample_sheet.csv", header=TRUE, sep= "\t")
+ 
+ 
+#merging tables
+
+  master_temp=merge(em,annotations, by.x=0, by.y=0)
+  master=merge(master_temp,de, by.x=1,by.y=0)  
+  
+  
+#master table cleaning,sorting and column additions(means of expression and sig column)
+  row.names(master) = master[ ,"symbol"]
+  master = na.omit(master[,-c(1,8)])
+  master= master[order(master[ ,"p"], decreasing=FALSE),]
+
+  master$Row.means = rowMeans(master[,1:6])
+  master$mlog10p = -log10(master$p)
+  master$sig = as.factor(master$p.adj < 0.05 & abs(master$log2fold) > 1.0)
+
+#sub-setting master and storing significant genes.
+  master_sig =subset(master, p.adj < 0.05 & abs(log2fold) >1)
+  sig_genes= row.names(master_sig)
+
+#sub-setting significantly down regulated and significantly up regulated 
+  master_sig_up = subset(master_sig, log2fold>1)
+  master_sig_up_top5 = master_sig_up[1:5,]
+  up_regulated_genes= row.names(master_sig_up)
+  
+  master_sig_down = subset(master_sig,log2fold < -1)
+  master_sig_down_top5= master_sig_down[1:5,]
+  down_regulated_genes=row.names(master_sig_down)
+
+#creating em_symbols
+  em_symbols= master[, ss$sample]
+
+#scaling gene expression table with all genes and significant genes only.
+  em_scaled=na.omit(data.frame(t(scale(t(em_symbols)))))
+  em_scaled_sig=em_scaled[sig_genes, ]
+  
+ #This section was written to save the tables. has been highlihted to run without errors 
+ # write.table(em_symbols, file="/Users/annociatachisale/Documents/R_output1/em_symbols.csv", sep="\t")
+
+ # write.table(em_scaled, file="/Users/annociatachisale/Documents/R_output1/em_scaled.csv", sep="\t")
+  
+ # write.table(master, file="/Users/annociatachisale/Documents/R_output1/master.csv", sep="\t")
+  
+ # write.table(master_sig, file="/Users/annociatachisale/Documents/R_output1/master_sig.csv", sep="\t")
+  
+  #write.table(em_scaled_sig, file="/Users/annociatachisale/Documents/R_output1/em_scaled_sig.csv", sep="\t")
+  
+################################custom themes##############################################
+#cusomising, text, background and legends
+  
+plot_theme= theme(
+    axis.text.x = element_text(angle = 45, hjust = 1), 
+    axis.title.x = element_text(size=12),
+    axis.title.y = element_text(size=12),
+    panel.grid = element_blank(),
+    panel.spacing = unit(1, "lines"),
+    panel.background = element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA, size=2),
+    plot.title = element_text(size=14,family="Arial", face="bold"),
+    strip.text.x = element_text(size = 16, family="Arial", face="bold", vjust=1),
+    legend.position = "bottom")
+    
+  
+heatmap_theme=theme(
+      axis.text.x = element_text(angle = 90, hjust = 1),                  
+      axis.text.y =  element_blank(),
+      axis.ticks=element_blank(), 
+      legend.title = element_blank(),
+      panel.background = element_blank(),
+      legend.spacing.x = unit(0.25, 'cm'))
+  
+rug_theme=theme(panel.grid = element_blank(),
+      plot.title = element_blank(),
+      panel.background = element_blank(),
+      panel.border = element_blank (),
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.ticks=element_blank())
+  
+#################################### Expression density plot########################################
+  
+  em.m= melt(em)
+  
+  #To make density plots color-coded (sample_group)
+  em.m$sample_group = ""
+  
+  #Search for the keyword and add sample group 
+  indeces = grep("CONTROL",em.m$variable)
+  em.m$sample_group[indeces] = "control"
+  
+  indeces = grep("COMBO",em.m$variable)
+  em.m$sample_group[indeces] = "combo"
+  
+  density_plot=ggplot(em.m, aes(x=log10(value+0.01),fill = sample_group))+
+    geom_density(size= 1)+
+    scale_fill_manual(values=c( "deeppink","chartreuse"), label = c("combo","Control"))+
+    facet_wrap(~variable, nrow=2)+
+    labs(title="Distribution of gene expression across treated and untreated AML stem cells.", x= "Expression(log10) ", y="Gene expression density")+
+    plot_theme
+  density_plot
+  
+  svglite("density_plot.svg", height =8, width = 8)
+  print(density_plot)  
+  dev.off()
+  
+################################# MA PLOT############################################
+#coloring by direction
+  master_non_sig = subset(master, sig=="FALSE")
+  master_non_sig$direction = "c"
+  master_sig_up$direction = "b"
+  master_sig_down$direction = "a"
+  
+#using rbind to add direction to the master file
+  master= rbind(master_non_sig, master_sig_up, master_sig_down) 
+  master$direction = factor(master$direction, levels = c("c", "b","a"))  
+  levels(master$direction) #to check the levels in master table
+  
+#re-odering master by p value after reshuffling from colouring
+  master= master[order(master[ ,"p"], decreasing=FALSE),]
+  
+  
+  MA_plot= ggplot(master, aes(x=log10(Row.means),y=log2fold, colour=direction)) + 
+    geom_point()+
+    scale_colour_manual(values = c("azure3", "darkred","cornflowerblue"), labels=c("non-significant", "up-regulated", "Down-regulated"))+ 
+    plot_theme+
+    labs( title= "MA plot", x="Mean expression(log10) ", y="Log2 fold change", colour="")+
+    geom_vline(xintercept= -1, linetype="dashed", color = "azure4", size=0.5)+     
+    geom_vline(xintercept= 1,  linetype="dashed", color = "azure4", size=0.5)+
+    geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "azure4", size=0.5)+
+    geom_hline(yintercept=log10(0.05), linetype="dashed", color = "azure4", size=0.5)
+    
+  MA_plot
+  
+  svglite("MA_plot.svg", height = 6, width = 6)
+  print(MA_plot)  
+  dev.off()
+  
+##################################### PCA ######################################################
+#making a PCA to see the sample group variations
+  as.matrix(sapply(em_scaled,as.numeric))
+  pca = prcomp(t(em_scaled))                 
+  pca_coordinates= data.frame(pca$x)
+
+#adding % variance calculations into the axis labels
+
+  vars = apply(pca$x, 2, var)
+  prop_x = round(vars["PC1"] / sum(vars),4) * 100
+  prop_y = round(vars["PC2"] / sum(vars),4) * 100
+  x_axis_label = paste("PC1 ", " (",prop_x, "%)",sep="")
+  y_axis_label = paste("PC2 ", " (",prop_y, "%)",sep="")
+
+
+  PCA_plot= ggplot(pca_coordinates, aes(x=PC1, y=PC2, colour = ss$sample_group)) + geom_point(size=3)+
+  scale_color_manual(values=c( "deeppink","chartreuse"), label = c("combo","Control"))+
+  plot_theme+
+  labs(title="Variation of treated and untreated AML stem cells", x=x_axis_label, y=y_axis_label, colour="")
+  PCA_plot
+  
+  svglite("PCA_plot.svg", height = 6, width = 6)
+  print( PCA_plot)  
+  dev.off()
+ ################################## VOLCANO PLOT################################################
+
+  volcano_plot = ggplot(master, aes(x=log2fold, y=mlog10p,colour = direction)) + 
+    geom_point()+
+    scale_colour_manual(values = c("azure3", "darkred","cornflowerblue"), labels=c("No change", "Up-regulated", "Down-regulated"))+    
+    geom_label_repel(data=master_sig_up_top5, aes(label=row.names(master_sig_up_top5)), colour= "darkred")+ 
+    geom_label_repel(data=master_sig_down_top5, aes(label=row.names(master_sig_down_top5)), colour= "cornflowerblue")+
+    plot_theme+
+    labs( title= "Volcano plot", x="Log2 fold change", y="-log10p", colour="")+
+    geom_vline(xintercept= -1, linetype="dashed", color = "azure4", size=0.5)+  
+    geom_vline(xintercept= 1,  linetype="dashed", color = "azure4", size=0.5)+
+    geom_hline(yintercept=-log10(0.05), linetype="dashed", color = "azure4", size=0.5)
+  volcano_plot
+  
+  svglite("volcano_plot.svg", height = 6, width = 6)
+  print( volcano_plot)  
+  dev.off()
+  
+  ################ heatmap for 100 significant genes,y clustering:####################### 
+  
+  colours = c("cornflowerblue","orange","red","darkred")
+  em_sig=em_scaled_sig[1:100,]
+  
+  hm.matrix = as.matrix(em_sig)
+  y.dist = Dist(hm.matrix, method="spearman")
+  y.cluster = hclust(y.dist, method="average")
+  y.dd = as.dendrogram(y.cluster)
+  y.dd.reorder = reorder(y.dd,0,FUN="average")
+  y.order = order.dendrogram(y.dd.reorder)
+  hm.matrix_clustered = hm.matrix[y.order,]
+  hm.matrix_clustered = melt(hm.matrix_clustered)
+  
+  
+  sig_genes_heatmap = ggplot(hm.matrix_clustered, aes(x=Var2, y=Var1, fill=value)) + 
+    geom_tile() + 
+    scale_fill_gradientn(colours= colorRampPalette(colours)(50))+
+    labs( x="Samples",y="Genes")+
+    heatmap_theme
+  sig_genes_heatmap  
+  
+  svglite("sig_genes_heatmap.svg", height = 6, width = 6)
+  print(sig_genes_heatmap)  
+  dev.off()
+  #######################rug to be used for all heatmaps in the code, same colour as PCA#######
+ #setting a column as factor,then numeric, then matrix the melting
+   groups_data = melt(as.matrix(as.numeric(as.factor(ss$sample_group))))
+  # Rug
+  rug_colours = c("deeppink","chartreuse")
+  rug_1 = ggplot(groups_data, aes(x = Var1, y = Var2, fill = value)) + 
+    geom_tile(show.legend=FALSE) + 
+    scale_fill_gradientn(colours = rug_colours) +
+    rug_theme
+  rug_1
+  
+  svglite("rug_1.svg", height = 1, width = 6)
+  print( rug_1)  
+  dev.off()
+  
+############### box plot and jitter plot of the top 10 most significant gens######################
+  
+  master= master[order(master[ ,"p"], decreasing=FALSE),]
+  
+  candidate_genes_top10 = row.names(em_scaled_sig[1:10, ])
+  gene_data = data.frame(t(em_scaled[candidate_genes_top10,]))
+  gene_data$sample_group = ss$sample_group
+  gene_data.m = melt(gene_data, id.vars="sample_group")
+  
+top10_sig_boxplot=ggplot (gene_data.m, aes(x= variable,y= value, fill = sample_group)) + 
+  geom_boxplot()+
+  geom_jitter(width = 0.1, colour = "azure4",)+
+  #geom_violin()+# violin plot code+
+  scale_fill_manual(values=c( "deeppink","chartreuse"), label = c("combo","Control"))+
+  plot_theme+
+  labs(title="Top ten significantly differentially expressed genes", x="Genes", y="Expression values(z-score)")
+top10_sig_boxplot
+  
+  svglite("top10_sig_boxplot.svg", height = 8, width = 8)
+  print( top10_sig_boxplot)  
+  dev.off()
+  
+######################################################################################
+  #faceted box plot layered with jitter plot for the top 5 significant up_regulated and down_regulated genes
+  
+
+  Up_reg_down_reg=c(row.names(master_sig_up_top5),row.names(master_sig_down_top5))  #a gene list for top 5 up regulated and down regulated
+  
+  gene_data = data.frame(t(em_scaled[Up_reg_down_reg,]))
+  gene_data$sample_group = ss$sample_group
+  gene_data.m = melt(gene_data, id.vars="sample_group")
+  
+  top5_sig_up_n_down_boxplot=ggplot (gene_data.m, aes(x= sample_group,y= value, fill = sample_group)) + 
+    geom_boxplot()+
+    facet_wrap(~variable, ncol=5)+
+    geom_jitter(width = 0.1, colour = "azure4",)+
+    scale_fill_manual(values=c( "deeppink","chartreuse"), label = c("combo","Control"))+
+    labs(title="Expression levels of the top 5 significantly upregulated and downregulated genes", x="Genes", y="Expression values(z-score)")+
+    plot_theme
+  top5_sig_up_n_down_boxplot
+#######################Pathway analysis: Over Representation Analysis (ORA) #################
+#saving plots for assignment only, the rest are viewed with the object ggp
+  #changing ensembl or symbol to entrezid and performing ORA
+  #all significant genes
+  
+  sig_genes_entrez = bitr(sig_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+  ora_results = enrichGO(gene = sig_genes_entrez$ENTREZID, OrgDb = org.Hs.eg.db, readable = T, ont ="BP", pvalueCutoff = 0.05, qvalueCutoff = 0.10)
+  
+  sig_genes_barplot  = barplot(ora_results, showCategory=10)+
+    labs(title= "Over-representation analysis of all significant genes")
+  sig_genes_barplot
+  
+  svglite(" sig_genes_barplot.svg", height = 8, width = 8)
+  print(sig_genes_barplot)  
+  dev.off()
+  
+  ggp = dotplot(ora_results, showCategory=10)
+  ggp
+  
+  ggp = goplot(ora_results, showCategory = 10)
+  ggp
+  
+  ggp = cnetplot(ora_results, categorySize=0.05)
+  ggp
+  
+####################All sig_genes ORA for Cellular components##############################
+  
+  sig_genes_entrez = bitr(sig_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+  ora_results = enrichGO(gene = sig_genes_entrez$ENTREZID, OrgDb = org.Hs.eg.db, readable = T, ont ="CC", pvalueCutoff = 0.05, qvalueCutoff = 0.10)
+  
+  
+  ggp = barplot(ora_results, showCategory=10)+
+    labs(title= "Over-representation analysis of all significant genes:Cellular Component")
+  ggp
+  
+  ################ significantly up-regulated genes BP ORA####################
+  
+  up_regulated_genes_entrez = bitr(up_regulated_genes,  fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+  ora_results_up = enrichGO(gene = up_regulated_genes_entrez$ENTREZID, OrgDb = org.Hs.eg.db, readable = T, ont = "BP", pvalueCutoff = 0.05, qvalueCutoff = 0.10)
+  
+  #printing plots
+  upreg_genes_dotplot = dotplot(ora_results_up, showCategory=10)+
+    labs(title=" Over-representation analysis of upregulated genes" )
+  upreg_genes_dotplot
+  
+  svglite("upreg_genes_dotplot.svg", height = 8, width = 8)
+  print( upreg_genes_dotplot)  
+  dev.off()
+  
+  upreg_genes_barplot = barplot(ora_results_up, showCategory=10)+
+    labs(title="Over-representation analysis of upregulated genes" )
+  upreg_genes_barplot
+  
+  svglite(" upreg_genes_barplot.svg", height = 8, width = 8)
+  print(upreg_genes_barplot)  
+  dev.off()
+  
+  ggp = goplot(ora_results_up, showCategory = 10)
+  ggp
+  
+  ggp = cnetplot(ora_results_up, categorySize=0.05)
+  ggp
+  
+########which genes are the in the most enriched ORA gene pathway
+  
+  gene_sets= ora_results_up$geneID
+  description= ora_results_up $Description
+  p.adj = ora_results_up$p.adjust
+  
+  ora_results_up_table=cbind(description, gene_sets,p.adj)
+  enriched_gene_set_up = as.character(ora_results_up_table [1,"gene_sets"])
+  candidate_genes_up = unlist(strsplit(enriched_gene_set_up, "/"))
+  candidate_genes_up 
+  
+####making a clustered heatmap of response to radiation:top-enriched pathway###########
+  
+  hm.matrix = as.matrix(em_scaled[candidate_genes_up,])
+  y.dist = Dist(hm.matrix, method="spearman")
+  y.cluster = hclust(y.dist, method="average")
+  y.dd = as.dendrogram(y.cluster)
+  y.dd.reorder = reorder(y.dd,0,FUN="average")
+  y.order = order.dendrogram(y.dd.reorder)
+  hm.matrix_clustered = hm.matrix[y.order,]
+  hm.matrix_clustered = melt(hm.matrix_clustered)
+  
+  up_reg_ORA_heatmap= ggplot(hm.matrix_clustered, aes(x=Var2, y=Var1, fill=value)) + 
+    geom_tile() + 
+    scale_fill_gradientn(colours= colorRampPalette(colours)(100))+
+    labs( x="Samples",y="Genes")+
+    heatmap_theme
+  up_reg_ORA_heatmap        
+    svglite("up_reg_heatmap2.svg", height = 8, width = 8)
+    print( up_reg_ORA_heatmap)  
+    dev.off()
+  
+## visualizing the genes involved in response to radiation(box_plot)
+  
+  gene_data = em_scaled[candidate_genes_up,]
+  gene_data = data.frame(t(gene_data))
+  gene_data$sample_group = ss$sample_group
+  gene_data.m = melt(gene_data, id.vars="sample_group")
+  
+  up_reg_ORA_boxplot=ggplot (gene_data.m, aes(x= variable,y= value, fill = sample_group)) + 
+    geom_boxplot()+
+    geom_jitter(width = 0.1, colour = "azure4",)+
+    scale_fill_manual(values=c( "deeppink","chartreuse"), label = c("combo","Control"))+
+    labs(title=" Response to radiation", x="Genes", y="Expression values(z-score)")+
+    plot_theme
+  up_reg_ORA_boxplot
+  
+  svglite("up_reg_ORA_boxplot.svg", height = 8, width = 8)
+  print( up_reg_ORA_boxplot)  
+  dev.off()
+  #############################################
+  
+  
+#SRINGS: to find view possible gene interaction of the genes in the GO: response to radiation
+  
+  candidate_genes_table = data.frame(candidate_genes_up)
+  names(candidate_genes_table) = "gene" 
+  
+# loading the string database, mapping genes, and making the plot respectively.
+  string_db = STRINGdb$new( version="11.5", species=9606, score_threshold=200,
+                            network_type="full", input_directory="")
+  string_mapped = string_db$map(candidate_genes_table, "gene", removeUnmappedRows = TRUE )
+  
+  string_db$plot_network(string_mapped)
+  svglite("string_db$plot_network(string_mapped).svg", height = 8, width = 8)
+  print( string_db$plot_network(string_mapped))  
+  dev.off()
+  
+################# Significantly down regulated genes ORA:BP ###########
+  
+  down_regulated_genes_entrez = bitr(down_regulated_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+  ora_results_down = enrichGO(gene = down_regulated_genes_entrez$ENTREZID, OrgDb = org.Hs.eg.db, readable = T, ont =
+                                "BP", pvalueCutoff = 0.05, qvalueCutoff = 0.10)
+ 
+  downreg_genes_dotplot = dotplot(ora_results_down, showCategory=10)+
+    labs (title=" Over-representation analysis of down-regulated genes" )
+  downreg_genes_dotplot
+    svglite("downreg_genes_dotplot2.svg", height = 8, width = 8)
+    print(downreg_genes_dotplot)  
+    dev.off()
+  
+  downreg_genes_barplot = barplot(ora_results_down, showCategory=10)+
+    labs (title=" Over-representation analysis of down-regulated genes" )
+  downreg_genes_barplot
+    svglite("downreg_genes_barplot.svg", height = 8, width = 8)
+    print( downreg_genes_barplot)  
+    dev.off()
+  
+#Get a list of the significant genes in the most enriched ORA gene set:leukocyte cell to cell adhension
+  
+  gene_sets = ora_results_down$geneID
+  description= ora_results_down $Description
+  p.adj = ora_results_down$p.adjust
+  
+  ora_results_down_table=cbind(description, gene_sets,p.adj)
+  enriched_gene_set_down = as.character(ora_results_down_table [1,"gene_sets"])
+  candidate_genes_down = unlist(strsplit(enriched_gene_set_down, "/"))
+  
+  #making a clustered heatmap from the candidate genes
+  hm.matrix = as.matrix(em_scaled[candidate_genes_down,])
+  y.dist = Dist(hm.matrix, method="spearman")
+  y.cluster = hclust(y.dist, method="average")
+  y.dd = as.dendrogram(y.cluster)
+  y.dd.reorder = reorder(y.dd,0,FUN="average")
+  y.order = order.dendrogram(y.dd.reorder)
+  hm.matrix_clustered = hm.matrix[y.order,]
+  hm.matrix_clustered = melt(hm.matrix_clustered)
+  
+  down_reg_ORA_heatmap = ggplot(hm.matrix_clustered, aes(x=Var2, y=Var1, fill=value)) + 
+    geom_tile() + 
+    scale_fill_gradientn(colours= colorRampPalette(colours)(100))+
+    labs( x="Samples",y="Genes")+
+    heatmap_theme
+  down_reg_ORA_heatmap       
+    svglite("down_reg_ORA_heatmap.svg", height = 8, width = 8)
+    print( down_reg_ORA_heatmap)  
+    dev.off()
+  
+  #visualising  genes in the top enriched pathway: leukocyte cell-to cell adhension
+  gene_data = em_scaled[candidate_genes_down,]
+  gene_data = data.frame(t(gene_data))
+  gene_data$sample_group = ss$sample_group
+  gene_data.m = melt(gene_data, id.vars="sample_group")
+  
+  
+  down_reg_ORA_boxplot=ggplot (gene_data.m, aes(x= variable,y= value, fill = sample_group)) + 
+    geom_boxplot()+
+    geom_jitter(width = 0.1, colour = "azure4",)+
+    scale_fill_manual(values=c( "deeppink","chartreuse"), label = c("combo","Control"))+
+    labs(title="leukocyte cell-to cell adhension ", x="Genes", y="Expression values(z-score)")+
+    plot_theme
+  down_reg_ORA_boxplot
+    svglite("down_reg_ORA_boxplot.svg", height = 8, width = 8)
+    print( down_reg_ORA_boxplot)  
+    dev.off()
+  
+#SRINGS: to find and view possible gene interaction of the genes in the GO: response to radiation
+  
+  candidate_genes_table = data.frame(candidate_genes_down)
+  names(candidate_genes_table) = "gene" 
+  
+#loading the string database, mapping genes, and making the plot respectivly.
+  string_db = STRINGdb$new( version="11.5", species=9606, score_threshold=200,
+                            network_type="full", input_directory="")
+  string_mapped = string_db$map(candidate_genes_table, "gene", removeUnmappedRows = TRUE )
+  string_db$plot_network(string_mapped)
+    svglite("string_db$plot_network(string_mapped).svg", height = 8, width = 8)
+    print( string_db$plot_network(string_mapped))  
+    dev.off()
+  
+  
+####################GSCE: Another pathway analysis method###########################
+  #creating a vector of the genes from master table sorted by log2fold change and arranging in decreasing order.
+  #GSEA requires a decreasing order
+  gsea_input = master$log2fold
+  names(gsea_input) = row.names(master)
+  gsea_input = na.omit(gsea_input)
+  gsea_input = sort(gsea_input, decreasing = TRUE)
+  gsea_input
+  
+  
+######### running the GSEA function
+  gse_results = gseGO(geneList= gsea_input,
+                      ont ="BP",
+                      keyType = "SYMBOL",
+                      nPerm = 10000,
+                      minGSSize = 3,
+                      maxGSSize = 800,
+                      pvalueCutoff = 0.05,
+                      verbose = TRUE,
+                      OrgDb = org.Hs.eg.db,
+                      pAdjustMethod = "none")
+  gse_results
+  
+  ggp = ridgeplot(gse_results)
+  ggp
+  
+  gse_dotplot= dotplot(gse_results, showCategory=10)+
+  labs(title="GSE GO terms")
+  gse_dotplot
+  
+  
+  
+  #if i want to make box plots and heatmaps of enriched gene set from GSE, 
+  #i use the same code as for ORA but using GSCE table to get gene names e.g 
+  
+  
+  nes_scores = gse_results$NES
+  ontology = gse_results$Description
+  p= gse_results$p.adjust
+  genes = gse_results$core_enrichment
+  
+  gse_table = cbind(ontology, nes_scores, p, genes)
+  enriched_gene_set_gse = as.character(gse_table [1,"genes"])
+  candidate_genes = unlist(strsplit(enriched_gene_set_gse, "/"))
+  
+  gene_data = em_scaled[candidate_genes[1:30],]
+  gene_data = data.frame(t(gene_data))
+  gene_data$sample_group = ss$sample_group
+  gene_data.m = melt(gene_data, id.vars="sample_group")
+  
+  ggp = ggplot (gene_data.m, aes(x= variable,y= value, fill = sample_group)) + 
+    geom_boxplot()+
+    geom_jitter(width = 0.1, colour = "azure4",)+
+    scale_fill_manual(values=c( "deeppink","chartreuse"), label = c("combo","Control"))+
+    labs(title="leukocyte cell-to cell adhension ", x="Genes", y="Expression values(z-score)")+
+    plot_theme
+ ggp
+  
+  
+  
+  
+  
+ 
+  
+  
+  
+  
+  
+  
+  
